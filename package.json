@@ -12,7 +12,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aljoschairmer/openrouter-ensemble-provider"
+    "url": "https://github.com/aljoschairmer/openrouter-ensemble"
   },
   "engines": {
     "vscode": "^1.104.0"
