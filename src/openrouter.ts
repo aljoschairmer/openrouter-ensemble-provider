@@ -59,7 +59,7 @@ export class OpenRouterClient {
 			...(key ? { 'Authorization': `Bearer ${key}` } : {}),
 			'Content-Type': 'application/json',
 			// OpenRouter app attribution headers
-			'HTTP-Referer': 'https://github.com/aljoschairmer/openrouter-ensemble',
+			'HTTP-Referer': 'https://github.com/aljoschairmer/openrouter-ensemble-provider',
 			'X-Title': 'OpenRouter Ensemble (VS Code)',
 		};
 	}
