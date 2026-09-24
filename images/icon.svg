@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a2b4c"/>
+      <stop offset="1" stop-color="#0f1a30"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4aa3ff"/>
+      <stop offset="1" stop-color="#b98ae6"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+  <!-- edges: drafting models converge into the final model -->
+  <g fill="none" stroke="url(#edge)" stroke-width="9" stroke-linecap="round">
+    <path d="M78 62 C 128 62, 128 128, 172 128"/>
+    <path d="M78 104 C 118 104, 128 128, 172 128"/>
+    <path d="M78 152 C 118 152, 128 128, 172 128"/>
+    <path d="M78 194 C 128 194, 128 128, 172 128"/>
+  </g>
+  <!-- drafting models -->
+  <g fill="#0f1a30" stroke="#4aa3ff" stroke-width="9">
+    <circle cx="62" cy="62" r="18"/>
+    <circle cx="62" cy="104" r="18"/>
+    <circle cx="62" cy="152" r="18"/>
+    <circle cx="62" cy="194" r="18"/>
+  </g>
+  <!-- final model -->
+  <circle cx="190" cy="128" r="34" fill="#b98ae6"/>
+  <circle cx="190" cy="128" r="14" fill="#0f1a30"/>
+</svg>

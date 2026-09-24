@@ -1,0 +1,473 @@
+{
+  "name": "openrouter-ensemble-provider",
+  "displayName": "OpenRouter Ensemble Chat Provider",
+  "description": "Brings OpenRouter models into GitHub Copilot Chat, plus virtual 'Ensemble' models where N LLMs collaborate (Mixture-of-Agents / Council) on every request.",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#1a2b4c",
+    "theme": "dark"
+  },
+  "version": "0.6.0",
+  "publisher": "aljoschairmer",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aljoschairmer/openrouter-ensemble-provider"
+  },
+  "engines": {
+    "vscode": "^1.104.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "openrouter",
+    "copilot",
+    "byok",
+    "mixture of agents",
+    "ensemble",
+    "llm council"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "openrouter-ensemble",
+        "displayName": "OpenRouter Ensemble",
+        "managementCommand": "openrouterEnsemble.manage"
+      }
+    ],
+    "commands": [
+      {
+        "command": "openrouterEnsemble.manage",
+        "title": "Open Settings",
+        "category": "OpenRouter Ensemble",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "openrouterEnsemble.setApiKey",
+        "title": "Set API Key",
+        "category": "OpenRouter Ensemble"
+      },
+      {
+        "command": "openrouterEnsemble.clearApiKey",
+        "title": "Remove API Key",
+        "category": "OpenRouter Ensemble"
+      },
+      {
+        "command": "openrouterEnsemble.showLog",
+        "title": "Show Log",
+        "category": "OpenRouter Ensemble"
+      },
+      {
+        "command": "openrouterEnsemble.resetPerformance",
+        "title": "Reset Model Performance Memory",
+        "category": "OpenRouter Ensemble"
+      },
+      {
+        "command": "openrouterEnsemble.refreshDashboard",
+        "title": "Refresh",
+        "category": "OpenRouter Ensemble",
+        "icon": "$(refresh)"
+      }
+    ],
+    "configuration": {
+      "title": "OpenRouter Ensemble",
+      "properties": {
+        "openrouterEnsemble.models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "~anthropic/claude-sonnet-latest",
+            "~anthropic/claude-opus-latest",
+            "~openai/gpt-sol-latest",
+            "~google/gemini-pro-latest",
+            "~x-ai/grok-latest",
+            "~deepseek/deepseek-pro-latest"
+          ],
+          "markdownDescription": "Single OpenRouter models to expose 1:1 in the model picker. Prefer the auto-updating `~vendor/\u2026-latest` aliases. Use `[\"*\"]` to expose every tool-capable model, or `[]` to only show ensembles. Easier: run **OpenRouter Ensemble: Open Settings**."
+        },
+        "openrouterEnsemble.ensembles": {
+          "type": "array",
+          "markdownDescription": "Virtual ensemble models. Easiest to edit on the settings page (**OpenRouter Ensemble: Open Settings**).",
+          "default": [
+            {
+              "id": "ensemble-fast",
+              "name": "Ensemble: Fast (MoA)",
+              "strategy": "moa",
+              "proposers": [
+                "~google/gemini-flash-latest",
+                "~deepseek/deepseek-flash-latest",
+                "~z-ai/glm-flash-latest",
+                "~openai/gpt-luna-latest"
+              ],
+              "aggregator": "~anthropic/claude-sonnet-latest",
+              "proposerReasoning": "low",
+              "graceSeconds": 8
+            },
+            {
+              "id": "ensemble-plan",
+              "name": "Ensemble: Plan & Build",
+              "strategy": "plan",
+              "proposers": [
+                {
+                  "model": "~openai/gpt-sol-latest"
+                },
+                {
+                  "model": "~google/gemini-pro-latest"
+                },
+                {
+                  "model": "~deepseek/deepseek-pro-latest",
+                  "role": "Focus on edge cases, failure modes and how to verify the change."
+                }
+              ],
+              "aggregator": "~anthropic/claude-opus-latest",
+              "proposerReasoning": "medium",
+              "aggregatorReasoning": "high",
+              "graceSeconds": 15,
+              "trigger": "afterExploration"
+            },
+            {
+              "id": "ensemble-council",
+              "name": "Ensemble: Frontier Council",
+              "strategy": "council",
+              "proposers": [
+                "~openai/gpt-sol-latest",
+                "~google/gemini-pro-latest",
+                "~x-ai/grok-latest",
+                "~deepseek/deepseek-pro-latest",
+                "~moonshotai/kimi-latest"
+              ],
+              "aggregator": "~anthropic/claude-opus-latest",
+              "proposerReasoning": "medium",
+              "aggregatorReasoning": "high",
+              "graceSeconds": 20,
+              "trigger": "afterExploration"
+            }
+          ],
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "proposers",
+              "aggregator"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "strategy": {
+                "type": "string",
+                "enum": [
+                  "moa",
+                  "council",
+                  "judge",
+                  "plan"
+                ],
+                "default": "moa",
+                "enumDescriptions": [
+                  "Mixture of agents: drafts are merged by the final model.",
+                  "Council: drafts are peer-reviewed with a rubric (own drafts excluded), then merged.",
+                  "Judge: one judge scores all drafts in a single call, then they are merged.",
+                  "Plan & build: drafts are plans; the final model merges them and executes with tools."
+                ]
+              },
+              "proposers": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "model"
+                      ],
+                      "properties": {
+                        "model": {
+                          "type": "string"
+                        },
+                        "temperature": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 2,
+                          "description": "Unset: automatic diversity when a model appears more than once."
+                        },
+                        "reasoning": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "minimal",
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh",
+                            "max"
+                          ]
+                        },
+                        "role": {
+                          "type": "string",
+                          "description": "Optional perspective, e.g. 'Focus on security'."
+                        }
+                      }
+                    }
+                  ]
+                },
+                "minItems": 1
+              },
+              "aggregator": {
+                "type": "string"
+              },
+              "aggregatorReasoning": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              "proposerReasoning": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              "judge": {
+                "type": "string",
+                "description": "Judge / critic model. Defaults to the aggregator."
+              },
+              "critique": {
+                "type": "boolean",
+                "default": false
+              },
+              "refine": {
+                "type": "boolean",
+                "default": false,
+                "description": "Second layer: drafts are revised after seeing each other."
+              },
+              "proposerMaxTokens": {
+                "type": "number",
+                "default": 4096
+              },
+              "trigger": {
+                "type": "string",
+                "enum": [
+                  "afterExploration",
+                  "userTurns",
+                  "always"
+                ],
+                "default": "userTurns",
+                "enumDescriptions": [
+                  "The final model first gathers context with read-only tools (memory, files, search) and requests the drafts when ready; drafts see that context. Editing is blocked until then.",
+                  "Draft at the start of each message; tool steps reuse the drafts.",
+                  "Draft on every request, including each tool step."
+                ]
+              },
+              "quorum": {
+                "type": "number",
+                "minimum": 1,
+                "description": "Drafts needed before the grace period starts. Default: half, rounded up."
+              },
+              "graceSeconds": {
+                "type": "number",
+                "minimum": 0,
+                "default": 10
+              },
+              "reread": {
+                "type": "boolean",
+                "default": false
+              },
+              "maxExplorationSteps": {
+                "type": "number",
+                "minimum": 1,
+                "default": 4,
+                "description": "afterExploration: tool rounds after which drafting starts even if the model hasn't asked for it."
+              }
+            }
+          }
+        },
+        "openrouterEnsemble.routers": {
+          "type": "array",
+          "markdownDescription": "Router models (\"Auto\"). Each message is rated by difficulty and sent to the `simple`, `standard` or `complex` target: an OpenRouter model id or `ensemble:<id>`. Tool steps of one message stay on the same target.",
+          "default": [
+            {
+              "id": "auto",
+              "name": "Auto (routes by difficulty)",
+              "classifier": "~openai/gpt-luna-latest",
+              "simple": "~google/gemini-flash-latest",
+              "standard": "~anthropic/claude-sonnet-latest",
+              "complex": "ensemble:ensemble-plan",
+              "useClassifier": true
+            }
+          ],
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "simple",
+              "standard",
+              "complex"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "classifier": {
+                "type": "string",
+                "description": "Cheap model that rates ambiguous requests."
+              },
+              "simple": {
+                "type": "string"
+              },
+              "standard": {
+                "type": "string"
+              },
+              "complex": {
+                "type": "string"
+              },
+              "useClassifier": {
+                "type": "boolean",
+                "default": true
+              }
+            }
+          }
+        },
+        "openrouterEnsemble.proposerTimeoutSeconds": {
+          "type": "number",
+          "default": 90,
+          "description": "Per-proposer timeout. Proposers that fail or time out are dropped; the aggregator still answers."
+        },
+        "openrouterEnsemble.proposerContextChars": {
+          "type": "number",
+          "default": 120000,
+          "description": "Max characters of flattened conversation sent to each proposer (tail is kept)."
+        },
+        "openrouterEnsemble.extraBody": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "Extra fields merged into every OpenRouter request, e.g. `{ \"provider\": { \"data_collection\": \"deny\" } }`."
+        },
+        "openrouterEnsemble.logUsage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Log token usage and cost of every call to the output channel."
+        },
+        "openrouterEnsemble.modelReasoning": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          "markdownDescription": "Reasoning effort per model id, e.g. `{ \"~anthropic/claude-sonnet-latest\": \"high\" }`. Mapped to the nearest level the model supports."
+        },
+        "openrouterEnsemble.fallbacks": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "markdownDescription": "Fallback models per model id, tried by OpenRouter when the primary is down or rate-limited, e.g. `{ \"~anthropic/claude-opus-latest\": [\"~openai/gpt-sol-latest\"] }`."
+        },
+        "openrouterEnsemble.stickySessions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Send a per-conversation session id so OpenRouter keeps each conversation on the same provider. Maximizes prompt-cache hits in agent loops."
+        },
+        "openrouterEnsemble.performanceMemory": {
+          "type": "boolean",
+          "default": true,
+          "description": "Remember locally how each drafting model performs (review wins, how much of the final answer came from its draft, latency, cost). Only numbers and model ids are stored, never prompts or code."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "openrouterEnsemble",
+          "title": "OpenRouter Ensemble",
+          "icon": "media/activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "openrouterEnsemble": [
+        {
+          "type": "webview",
+          "id": "openrouterEnsemble.dashboard",
+          "name": "Usage",
+          "icon": "media/activitybar.svg",
+          "contextualTitle": "OpenRouter Ensemble"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "openrouterEnsemble.refreshDashboard",
+          "when": "view == openrouterEnsemble.dashboard",
+          "group": "navigation@1"
+        },
+        {
+          "command": "openrouterEnsemble.manage",
+          "when": "view == openrouterEnsemble.dashboard",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "openrouterEnsemble.refreshDashboard",
+          "when": "false"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "gen:types": "node scripts/gen-types.mjs",
+    "test": "npm run compile && node test/pipeline.test.js && node test/performance.test.js && node test/usage.test.js && node test/e2e.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.104.0",
+    "@vscode/vsce": "^3.0.0",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5.9.2"
+  }
+}
