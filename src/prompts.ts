@@ -70,6 +70,7 @@ Respond ONLY with JSON: {"difficulty": <1-5>}
 /** Appended to the final model's system prompt during the exploration phase. */
 export const EXPLORE = `You work in two phases on this request.
 Phase 1 (now): gather the context the task needs with the available read-only tools. Check memory for relevant notes, read the files involved, and search the codebase where needed. You cannot edit anything yet.
+If code knowledge graph tools are available (e.g. query_graph, get_neighbors, shortest_path), use them first to find the modules, symbols and call paths involved, then read only the files that matter.
 As soon as you have enough context to plan the change, call request_expert_drafts. Several expert models will then draft solutions from everything gathered so far, and you will get the full toolset to implement the best one.
 If the request is a simple question that needs no code changes, just answer it directly.`;
 

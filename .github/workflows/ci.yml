@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · graphify via ${{ matrix.install }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        # uv / pip: graphify installed by the user. managed: nothing installed, the extension installs its own.
+        # managed-own-python: same, but uv must download its own Python (machine without a usable Python).
+        install: [uv, pip, managed, managed-own-python]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit and e2e tests
+        run: npm test
+
+      # graphify as users install it: uv tool (isolated venv, trampoline launchers on Windows) ...
+      - uses: astral-sh/setup-uv@v6
+        if: matrix.install == 'uv'
+
+      - name: Install graphify (uv tool)
+        if: matrix.install == 'uv'
+        shell: bash
+        run: |
+          uv tool install "graphifyy[mcp]"
+          uv tool dir --bin >> "$GITHUB_PATH"
+
+      # ... or pip into a venv (distlib .exe launchers on Windows)
+      - uses: actions/setup-python@v5
+        if: matrix.install == 'pip'
+        with:
+          python-version: '3.12'
+
+      - name: Install graphify (pip venv)
+        if: matrix.install == 'pip'
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/gv"
+          if [ -d "$RUNNER_TEMP/gv/Scripts" ]; then BIN="$RUNNER_TEMP/gv/Scripts"; else BIN="$RUNNER_TEMP/gv/bin"; fi
+          "$BIN/python" -m pip install -q "graphifyy[mcp]"
+          echo "$BIN" >> "$GITHUB_PATH"
+
+      - name: Graph integration test (real graphify)
+        env:
+          GRAPHIFY_INTEGRATION: ${{ startsWith(matrix.install, 'managed') && 'managed' || '1' }}
+          GRAPHIFY_UV_ENV: ${{ matrix.install == 'managed-own-python' && '{"UV_PYTHON_PREFERENCE":"only-managed"}' || '{}' }}
+        run: node test/graph.integration.js
