@@ -87,8 +87,9 @@ export async function findExecutable(
 	exists: (p: string) => Promise<boolean> = isFile,
 ): Promise<string | undefined> {
 	const p = platform === 'win32' ? path.win32 : path.posix;
-	const exts = platform === 'win32'
-		? ['', ...(env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean).map(e => e.toLowerCase())]
+	// Windows: a name without extension only runs via PATHEXT (an extensionless file there is a POSIX script, not runnable)
+	const exts = platform === 'win32' && !p.extname(command)
+		? (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map(e => e.toLowerCase())
 		: [''];
 	const candidates = p.isAbsolute(command) || command.includes(p.sep)
 		? exts.map(e => command + e)
@@ -178,7 +179,7 @@ export class GraphService implements vscode.McpServerDefinitionProvider<vscode.M
 				multi ? `graphify ${folder.name}` : 'graphify',
 				s.server!.command,
 				[...s.server!.args, file],
-				{ PYTHONUNBUFFERED: '1' },
+				{ PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' },
 				'1',
 			);
 			def.cwd = folder.uri;
@@ -271,6 +272,10 @@ export class GraphService implements vscode.McpServerDefinitionProvider<vscode.M
 
 		const cli = await findExecutable(settings.command);
 		if (!cli) { return { state: 'missing-cli', detail: `"${settings.command}" is not on the PATH`, ...empty }; }
+		if (/\.(cmd|bat)$/i.test(cli)) {
+			// Batch wrappers only run through a shell, and neither we nor VS Code's MCP host use one
+			return { state: 'missing-cli', cli, detail: `${cli} is a batch wrapper; point openrouterEnsemble.graph.command at graphify.exe`, ...empty };
+		}
 
 		// Prefer graphify's own MCP launcher next to the CLI (same venv, works on every platform)
 		const mcpLauncher = settings.python ? undefined : await siblingExecutable(cli, 'graphify-mcp');

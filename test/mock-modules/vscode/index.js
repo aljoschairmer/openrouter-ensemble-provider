@@ -3,7 +3,7 @@ class ToolCallPart { constructor(i,n,x){ this.callId=i; this.name=n; this.input=
 class ToolResultPart { constructor(i,c){ this.callId=i; this.content=c; } }
 class DataPart { constructor(d,m){ this.data=d; this.mimeType=m; } }
 class CancellationError extends Error {}
-class EventEmitter { constructor(){ this.l=[]; this.event = f => { this.l.push(f); return { dispose(){} }; }; } fire(v){ this.l.forEach(f=>f(v)); } }
+class EventEmitter { constructor(){ this.l=[]; this.event = f => { this.l.push(f); return { dispose(){} }; }; } fire(v){ this.l.forEach(f=>f(v)); } dispose(){} }
 global.__config = global.__config || {};
 module.exports = {
   LanguageModelTextPart: TextPart, LanguageModelToolCallPart: ToolCallPart, LanguageModelToolResultPart: ToolResultPart,
