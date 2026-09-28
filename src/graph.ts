@@ -3,11 +3,14 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { cfg } from './config';
+import type { ManagedGraphify } from './graphInstall';
 
 /**
  * Code knowledge graph via graphify (https://github.com/Graphify-Labs/graphify).
  *
- * graphify is an external Python CLI. It is never bundled: the extension finds it on the PATH, builds
+ * graphify is an external Python CLI. It is never bundled: the extension uses an existing install from the
+ * PATH, or installs its own copy on request (see graphInstall.ts: uv + graphify in the extension's storage,
+ * no Python needed on the machine). It builds
  * the graph on request (`extract --code-only`: local tree-sitter parsing, no LLM, nothing leaves the
  * machine) and exposes graphify's own MCP server (`graphify-mcp`) to VS Code. The graph
  * tools then show up in `options.tools` like any other tool, for single models, ensembles and routers.
@@ -28,6 +31,10 @@ export type GraphState =
 export interface GraphStatus {
 	state: GraphState;
 	cli?: string;
+	/** The CLI is the extension's own managed install. */
+	managed?: boolean;
+	/** No usable graphify, but the extension can install one itself. */
+	canInstall?: boolean;
 	/** How the MCP server is started: graphify's own `graphify-mcp` launcher, or `<python> -m graphify.serve`. */
 	server?: { command: string; args: string[] };
 	python?: string;
@@ -60,15 +67,16 @@ export function readGraphSettings(): GraphSettings {
 /**
  * Finds the Python interpreter behind a console-script launcher, so the MCP server runs in the same
  * environment as the CLI (uv tool / pipx install into isolated venvs, where plain `python` has no graphify).
- * - POSIX scripts: `#!/path/to/python` or pip's `#!/bin/sh` + `'''exec' "/path/to/python" "$0" "$@"` form.
+ * - POSIX scripts: `#!/path/to/python`, or for paths with spaces `#!/bin/sh` + `'''exec' "/path/python" "$0" "$@"` (pip) / `'…'` (uv).
  * - Windows .exe launchers (pip/distlib, uv trampoline) embed the interpreter path near the end of the file.
  */
 export function interpreterFromLauncher(content: Buffer): string | undefined {
 	const head = content.subarray(0, 2048).toString('utf8');
 	if (head.startsWith('#!')) {
 		const first = head.split(/\r?\n/, 1)[0].slice(2).trim();
-		const execForm = /^'''exec' "?([^"\n]+?python[^"\s]*)"? /m.exec(head);
-		if (execForm) { return execForm[1]; }
+		// pip quotes with "…", uv with '…'
+		const execForm = /^'''exec' (["'])(.+?python[^"'\s]*)\1 /m.exec(head);
+		if (execForm) { return execForm[2]; }
 		if (/python[\d.]*$/.test(first) && !first.includes(' ')) { return first; }
 		const env = /^\/usr\/bin\/env\s+(python[\d.]*)$/.exec(first);
 		if (env) { return env[1]; }
@@ -130,8 +138,9 @@ export class GraphService implements vscode.McpServerDefinitionProvider<vscode.M
 	private readonly disposables: vscode.Disposable[] = [];
 	private readonly running = new Set<ChildProcess>();
 	private building = false;
+	private installing?: Promise<boolean>;
 
-	constructor(private readonly log: vscode.LogOutputChannel) {
+	constructor(private readonly log: vscode.LogOutputChannel, readonly managed?: ManagedGraphify) {
 		const watcher = vscode.workspace.createFileSystemWatcher(`**/${GRAPH_DIR}/${GRAPH_FILE}`);
 		// The MCP server hot-reloads graph.json itself; only a graph appearing or disappearing changes the server list.
 		this.disposables.push(
@@ -209,9 +218,9 @@ export class GraphService implements vscode.McpServerDefinitionProvider<vscode.M
 			void vscode.window.showWarningMessage('Building the knowledge graph runs graphify on this folder. Trust the workspace first.');
 			return false;
 		}
-		if (!s.cli) {
-			this.showInstallHint('graphify was not found.');
-			return false;
+		if (s.state === 'missing-cli' || s.state === 'missing-mcp') {
+			if (!await this.offerInstall(s)) { return false; }
+			return this.build(folder);
 		}
 		const target = folder ?? await this.pickFolder([...s.graphs.map(g => g.folder), ...s.missing]);
 		if (!target) { return false; }
@@ -246,12 +255,12 @@ export class GraphService implements vscode.McpServerDefinitionProvider<vscode.M
 	}
 
 	/** One-time hint per workspace when the feature is on but no folder has a graph yet. */
-	async maybeSuggestBuild(state: vscode.Memento) {
+	async maybeSuggestBuild(state: vscode.Memento): Promise<void> {
 		const s = await this.status();
 		if (s.state === 'missing-cli' || s.state === 'missing-mcp') {
 			if (!state.get('graph.installHintShown')) {
 				await state.update('graph.installHintShown', true);
-				this.showInstallHint(s.state === 'missing-mcp' ? 'graphify is installed without MCP support.' : 'graphify was not found.');
+				if (await this.offerInstall(s)) { return this.maybeSuggestBuild(state); }
 			}
 			return;
 		}
@@ -270,16 +279,44 @@ export class GraphService implements vscode.McpServerDefinitionProvider<vscode.M
 		if (!settings.enabled) { return { state: 'disabled', ...empty }; }
 		if (!vscode.workspace.isTrusted) { return { state: 'untrusted', ...empty }; }
 
-		const cli = await findExecutable(settings.command);
-		if (!cli) { return { state: 'missing-cli', detail: `"${settings.command}" is not on the PATH`, ...empty }; }
+		const folders = (vscode.workspace.workspaceFolders ?? []).filter(f => f.uri.scheme === 'file');
+		const graphs: GraphStatus['graphs'] = [];
+		const missing: vscode.WorkspaceFolder[] = [];
+		for (const folder of folders) {
+			const file = path.join(folder.uri.fsPath, GRAPH_DIR, GRAPH_FILE);
+			if (await isFile(file)) { graphs.push({ folder, file }); } else { missing.push(folder); }
+		}
+
+		// An explicitly configured command wins. Otherwise: graphify on the PATH, then the extension's own install.
+		const explicit = settings.command !== 'graphify';
+		const candidates: { cli: string; managed: boolean }[] = [];
+		const onPath = await findExecutable(settings.command);
+		if (onPath) { candidates.push({ cli: onPath, managed: false }); }
+		if (!explicit && this.managed && await this.managed.installed()) { candidates.push({ cli: this.managed.cliPath, managed: true }); }
+		const canInstall = !explicit && !!this.managed?.supported;
+
+		let first: GraphStatus | undefined;
+		for (const c of candidates) {
+			const s = await this.evaluate(c.cli, settings.python, graphs, missing);
+			if (s.state === 'ready') { return { ...s, managed: c.managed }; }
+			first ??= { ...s, managed: c.managed, canInstall: canInstall && !c.managed };
+		}
+		return first ?? {
+			state: 'missing-cli', canInstall, graphs, missing,
+			detail: `"${settings.command}" is not on the PATH`,
+		};
+	}
+
+	/** Checks one graphify CLI: batch wrapper, MCP launcher / interpreter, [mcp] extra importable. */
+	private async evaluate(cli: string, pythonSetting: string, graphs: GraphStatus['graphs'], missing: vscode.WorkspaceFolder[]): Promise<GraphStatus> {
 		if (/\.(cmd|bat)$/i.test(cli)) {
 			// Batch wrappers only run through a shell, and neither we nor VS Code's MCP host use one
-			return { state: 'missing-cli', cli, detail: `${cli} is a batch wrapper; point openrouterEnsemble.graph.command at graphify.exe`, ...empty };
+			return { state: 'missing-cli', cli, detail: `${cli} is a batch wrapper; point openrouterEnsemble.graph.command at graphify.exe`, graphs, missing };
 		}
 
 		// Prefer graphify's own MCP launcher next to the CLI (same venv, works on every platform)
-		const mcpLauncher = settings.python ? undefined : await siblingExecutable(cli, 'graphify-mcp');
-		let python = settings.python || undefined;
+		const mcpLauncher = pythonSetting ? undefined : await siblingExecutable(cli, 'graphify-mcp');
+		let python = pythonSetting || undefined;
 		if (!python) {
 			try { python = interpreterFromLauncher(await fs.readFile(mcpLauncher ?? cli)); } catch { /* unreadable launcher */ }
 		}
@@ -288,14 +325,6 @@ export class GraphService implements vscode.McpServerDefinitionProvider<vscode.M
 		const server = mcpLauncher ? { command: mcpLauncher, args: [] }
 			: python ? { command: python, args: ['-m', 'graphify.serve'] }
 			: undefined;
-
-		const folders = (vscode.workspace.workspaceFolders ?? []).filter(f => f.uri.scheme === 'file');
-		const graphs: GraphStatus['graphs'] = [];
-		const missing: vscode.WorkspaceFolder[] = [];
-		for (const folder of folders) {
-			const file = path.join(folder.uri.fsPath, GRAPH_DIR, GRAPH_FILE);
-			if (await isFile(file)) { graphs.push({ folder, file }); } else { missing.push(folder); }
-		}
 
 		if (!server) { return { state: 'missing-mcp', cli, detail: 'no Python interpreter found for graphify', graphs, missing }; }
 		// The MCP SDK is an optional extra of graphifyy; check it's importable so VS Code doesn't get a server that dies on start
@@ -309,6 +338,81 @@ export class GraphService implements vscode.McpServerDefinitionProvider<vscode.M
 			}
 		}
 		return { state: 'ready', cli, server, python, graphs, missing };
+	}
+
+	// ---- Managed install -------------------------------------------------------------------------
+
+	/** Asks once, then installs. Falls back to manual instructions where automatic install isn't possible. */
+	async offerInstall(s: GraphStatus): Promise<boolean> {
+		const reason = s.state === 'missing-mcp' ? 'The installed graphify has no MCP support.' : 'graphify is not installed.';
+		if (!s.canInstall) {
+			this.showInstallHint(reason);
+			return false;
+		}
+		const choice = await vscode.window.showInformationMessage(
+			`${reason} Install it automatically? The extension downloads uv and graphify from PyPI (plus Python, if none is installed) `
+			+ 'into its own storage folder. Nothing is added to your PATH.',
+			'Install', 'Install Manually…');
+		if (choice === 'Install Manually…') { this.showInstallHint(reason); }
+		return choice === 'Install' ? this.installManaged() : false;
+	}
+
+	/** Installs (or with `upgrade`, updates) the extension's own graphify. Concurrent calls share one install. */
+	installManaged(upgrade = false): Promise<boolean> {
+		if (!this.managed) { return Promise.resolve(false); }
+		const managed = this.managed;
+		return this.installing ??= (async () => {
+			try {
+				return await vscode.window.withProgress({
+					location: vscode.ProgressLocation.Notification,
+					title: upgrade ? 'Updating graphify' : 'Installing graphify',
+					cancellable: true,
+				}, async (progress, token) => {
+					const abort = new AbortController();
+					const sub = token.onCancellationRequested(() => abort.abort());
+					try {
+						const cli = await managed.install({ report: message => progress.report({ message }) }, abort.signal, upgrade);
+						this.log.info(`graphify ${upgrade ? 'updated' : 'installed'}: ${cli}`);
+						void vscode.window.showInformationMessage(`graphify ${upgrade ? 'updated' : 'installed'}.`);
+						return true;
+					} catch (err) {
+						if (abort.signal.aborted) { return false; }
+						this.log.error(`graphify install failed: ${errorMessage(err)}`);
+						void vscode.window.showErrorMessage(`Installing graphify failed: ${lastLine(errorMessage(err))}`, 'Show Log', 'Install Manually…')
+							.then(c => {
+								if (c === 'Show Log') { this.log.show(); }
+								if (c === 'Install Manually…') { this.showInstallHint('Automatic install failed.'); }
+							});
+						return false;
+					} finally {
+						sub.dispose();
+					}
+				});
+			} finally {
+				this.installing = undefined;
+				this.statusCache = undefined;
+				this.refresh();
+			}
+		})();
+	}
+
+	async removeManaged(): Promise<void> {
+		if (!this.managed || !await this.managed.installed()) {
+			void vscode.window.showInformationMessage('The extension has not installed its own graphify.');
+			return;
+		}
+		const ok = await vscode.window.showWarningMessage('Remove the graphify copy installed by this extension?', { modal: true }, 'Remove');
+		if (ok !== 'Remove') { return; }
+		this.lastSignature = '';
+		this.statusCache = Promise.resolve({ state: 'missing-cli', graphs: [], missing: [] });
+		this.changeEmitter.fire(); // stop offering the server before its files disappear
+		try {
+			await this.managed.remove();
+			void vscode.window.showInformationMessage('graphify removed.');
+		} catch (err) {
+			void vscode.window.showErrorMessage(`Removing graphify failed (is a graphify server still running?): ${errorMessage(err)}`);
+		}
+		this.refresh();
 	}
 
 	private showInstallHint(reason: string) {
@@ -341,14 +445,18 @@ export class GraphService implements vscode.McpServerDefinitionProvider<vscode.M
 }
 
 export function describe(s: GraphStatus): string {
+	const install = s.canInstall ? ' — run "OpenRouter Ensemble: Install graphify" to install it automatically' : '';
 	switch (s.state) {
 		case 'disabled': return 'off';
 		case 'untrusted': return 'off in restricted mode';
-		case 'missing-cli': return `graphify not available (${s.detail ?? 'not found'})`;
-		case 'missing-mcp': return `graphify found at ${s.cli} but its MCP server can't start (${s.detail ?? ''}); install with ${INSTALL_HINT}`;
-		case 'ready': return s.graphs.length
-			? `serving ${s.graphs.map(g => g.folder.name).join(', ')} via ${s.server?.command}`
-			: 'ready, no graph built yet (run "OpenRouter Ensemble: Build Knowledge Graph")';
+		case 'missing-cli': return `graphify not available (${s.detail ?? 'not found'})${install}`;
+		case 'missing-mcp': return `graphify found at ${s.cli} but its MCP server can't start (${s.detail ?? ''})${install || `; install with ${INSTALL_HINT}`}`;
+		case 'ready': {
+			const via = s.managed ? 'the extension\'s own graphify' : s.server?.command;
+			return s.graphs.length
+				? `serving ${s.graphs.map(g => g.folder.name).join(', ')} via ${via}`
+				: `ready (${via}), no graph built yet (run "OpenRouter Ensemble: Build Knowledge Graph")`;
+		}
 	}
 }
 

@@ -3,7 +3,8 @@
  * Covers what VS Code would do: detect graphify, build the graph, take the MCP server definition we hand
  * to VS Code, start it exactly like VS Code does (no shell) and talk MCP to it over stdio.
  *
- *   GRAPHIFY_INTEGRATION=1 node test/graph.integration.js
+ *   GRAPHIFY_INTEGRATION=1 node test/graph.integration.js        graphify from the PATH
+ *   GRAPHIFY_INTEGRATION=managed node test/graph.integration.js  no graphify installed: the extension installs its own
  */
 if (!process.env.GRAPHIFY_INTEGRATION) { console.log('skipped (set GRAPHIFY_INTEGRATION=1)'); process.exit(0); }
 
@@ -44,6 +45,11 @@ Object.assign(vscode.workspace, {
 });
 
 const { GraphService, describe } = require(path.join(__dirname, '..', 'out', 'graph.js'));
+const { ManagedGraphify } = require(path.join(__dirname, '..', 'out', 'graphInstall.js'));
+const MANAGED = process.env.GRAPHIFY_INTEGRATION === 'managed';
+const managedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'managed graphify-'));
+// GRAPHIFY_UV_ENV (JSON) lets CI force e.g. UV_PYTHON_PREFERENCE=only-managed to exercise the Python download
+const managed = new ManagedGraphify(managedRoot, { env: () => JSON.parse(process.env.GRAPHIFY_UV_ENV || '{}'), log: m => logs.push(m) });
 const logs = [];
 const log = { info: m => logs.push(m), error: m => logs.push('ERR ' + m), show() {} };
 
@@ -99,9 +105,38 @@ async function checkServer(def, label) {
 (async () => {
   console.log(`platform ${process.platform}, workspace "${ws}"`);
 
-  // 1) default detection from PATH
-  let g = new GraphService(log);
+  let g = new GraphService(log, managed);
   let s = await g.status();
+
+  // 0) managed: nothing installed → offered; install downloads uv (verified) and graphify into the storage folder
+  if (MANAGED) {
+    console.log(`  before install: ${describe(s)}`);
+    assert.strictEqual(s.state, 'missing-cli', 'managed mode must start without graphify on the PATH');
+    assert.strictEqual(s.canInstall, true);
+    const t0 = Date.now();
+    assert.strictEqual(await g.installManaged(), true, `install failed: ${messages.join('\n')}\n${logs.join('\n')}`);
+    console.log(`✓ managed install in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${managed.cliPath}`);
+    assert.ok(logs.some(l => /uv 0\.\d+\.\d+ verified/.test(l)), 'uv checksum verified');
+    g.dispose();
+    g = new GraphService(log, managed);
+    s = await g.status();
+    assert.strictEqual(s.managed, true, 'uses the managed install');
+    assert.ok(s.cli.startsWith(managedRoot), s.cli);
+    const home = /^home\s*=\s*(.+)$/m.exec(fs.readFileSync(path.join(managedRoot, 'tools', 'graphifyy', 'pyvenv.cfg'), 'utf8'))[1].trim();
+    console.log(`  Python used: ${home}`);
+    if (/only-managed/.test(process.env.GRAPHIFY_UV_ENV || '')) {
+      assert.ok(path.resolve(home).toLowerCase().startsWith(path.resolve(managedRoot, 'python').toLowerCase()), `own Python downloaded into the managed folder: ${home}`);
+      console.log('✓ no system Python used: uv downloaded its own into the managed folder');
+    }
+    // idempotent: a second install reuses uv (no download)
+    const before = logs.length;
+    assert.strictEqual(await g.installManaged(), true);
+    assert.ok(!logs.slice(before).some(l => /verified and extracted/.test(l)), 'second install reuses uv');
+    g.refresh(); s = await g.status();
+    console.log('✓ second install reuses uv');
+  }
+
+  // 1) detection
   console.log(`  detected: ${describe(s)} | cli=${s.cli} | server=${JSON.stringify(s.server)} | python=${s.python}`);
   assert.strictEqual(s.state, 'ready', describe(s));
   assert.deepStrictEqual(s.missing.map(f => f.name), ['ws']);
@@ -134,7 +169,7 @@ async function checkServer(def, label) {
   fs.copyFileSync(fs.realpathSync(s.cli), loneCli);
   if (process.platform !== 'win32') { fs.chmodSync(loneCli, 0o755); }
   settings['graph.command'] = loneCli;
-  g = new GraphService(log);
+  g = new GraphService(log, managed);
   const s2 = await g.status();
   console.log(`  fallback: ${describe(s2)} | server=${JSON.stringify(s2.server)} | python=${s2.python}`);
   assert.strictEqual(s2.state, 'ready', describe(s2));
@@ -145,16 +180,30 @@ async function checkServer(def, label) {
 
   // 5) wrong command → missing-cli, deleted graph → no server
   settings['graph.command'] = 'graphify-does-not-exist';
-  g = new GraphService(log);
-  assert.strictEqual((await g.status()).state, 'missing-cli');
+  g = new GraphService(log, managed);
+  const s3 = await g.status();
+  assert.strictEqual(s3.state, 'missing-cli');
+  assert.ok(!s3.canInstall, 'explicit command: no automatic install offered');
   g.dispose();
   delete settings['graph.command'];
-  g = new GraphService(log);
+  g = new GraphService(log, managed);
   const [def2] = await g.provideMcpServerDefinitions();
   fs.rmSync(path.join(ws, 'graphify-out'), { recursive: true, force: true });
   assert.strictEqual(await g.resolveMcpServerDefinition(def2), undefined, 'deleted graph → server not started');
   g.dispose();
   console.log('✓ missing CLI detected; deleted graph is not started');
+
+  if (MANAGED) {
+    // remove: the folder goes away, status falls back to missing-cli with the install offer
+    vscode.window.showWarningMessage = async () => 'Remove';
+    await g.removeManaged();
+    assert.ok(!fs.existsSync(managedRoot), 'managed folder removed');
+    g.refresh();
+    const s4 = await g.status();
+    assert.strictEqual(s4.state, 'missing-cli');
+    assert.strictEqual(s4.canInstall, true);
+    console.log('✓ remove deletes the managed install');
+  }
 
   console.log('\nALL GRAPH INTEGRATION TESTS PASSED');
   process.exit(0);

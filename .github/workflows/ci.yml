@@ -16,7 +16,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
-        install: [uv, pip]
+        # uv / pip: graphify installed by the user. managed: nothing installed, the extension installs its own.
+        # managed-own-python: same, but uv must download its own Python (machine without a usable Python).
+        install: [uv, pip, managed, managed-own-python]
     steps:
       - uses: actions/checkout@v4
 
@@ -58,5 +60,6 @@ jobs:
 
       - name: Graph integration test (real graphify)
         env:
-          GRAPHIFY_INTEGRATION: '1'
+          GRAPHIFY_INTEGRATION: ${{ startsWith(matrix.install, 'managed') && 'managed' || '1' }}
+          GRAPHIFY_UV_ENV: ${{ matrix.install == 'managed-own-python' && '{"UV_PYTHON_PREFERENCE":"only-managed"}' || '{}' }}
         run: node test/graph.integration.js

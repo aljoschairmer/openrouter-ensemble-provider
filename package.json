@@ -89,6 +89,21 @@
         "command": "openrouterEnsemble.graphStatus",
         "title": "Show Knowledge Graph Status",
         "category": "OpenRouter Ensemble"
+      },
+      {
+        "command": "openrouterEnsemble.installGraphify",
+        "title": "Install graphify (managed by this extension)",
+        "category": "OpenRouter Ensemble"
+      },
+      {
+        "command": "openrouterEnsemble.updateGraphify",
+        "title": "Update graphify",
+        "category": "OpenRouter Ensemble"
+      },
+      {
+        "command": "openrouterEnsemble.removeGraphify",
+        "title": "Remove graphify installed by this extension",
+        "category": "OpenRouter Ensemble"
       }
     ],
     "configuration": {
@@ -434,7 +449,7 @@
         "openrouterEnsemble.graph.enabled": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Expose a code knowledge graph built by [graphify](https://github.com/Graphify-Labs/graphify) as MCP tools (`query_graph`, `get_neighbors`, `shortest_path`, \u2026) in Copilot Chat agent mode. Ensembles with `afterExploration` use them while exploring, so the drafting models see the results. Requires graphify with MCP support: `uv tool install \"graphifyy[mcp]\"`. Build the graph with **OpenRouter Ensemble: Build Knowledge Graph** (local, code only, no API calls)."
+          "markdownDescription": "Expose a code knowledge graph built by [graphify](https://github.com/Graphify-Labs/graphify) as MCP tools (`query_graph`, `get_neighbors`, `shortest_path`, \u2026) in Copilot Chat agent mode. Ensembles with `afterExploration` use them while exploring, so the drafting models see the results. Uses graphify from the PATH, or installs its own copy on request (no Python needed). Build the graph with **OpenRouter Ensemble: Build Knowledge Graph** (local, code only, no API calls)."
         },
         "openrouterEnsemble.graph.command": {
           "type": "string",

@@ -62,8 +62,13 @@ no LLM, nothing leaves the machine). The extension provides graphify's MCP serve
 every model. They count as read-only, so `afterExploration` ensembles can use them while exploring, and the
 drafting models see what the graph returned.
 
-1. Install graphify with MCP support: `uv tool install "graphifyy[mcp]"` (or `pipx install "graphifyy[mcp]"`).
-2. Set `openrouterEnsemble.graph.enabled` to `true`.
+1. Set `openrouterEnsemble.graph.enabled` to `true`.
+2. If graphify isn't installed, the extension offers to install it: **Install** downloads [uv](https://github.com/astral-sh/uv)
+   from PyPI (pinned version, SHA-256 checked) and runs `uv tool install "graphifyy[mcp]"` inside the extension's storage folder.
+   uv uses a system Python ≥ 3.10 if there is one and downloads its own otherwise, so nothing needs to be installed beforehand
+   and nothing is added to your PATH. VS Code's `http.proxy` is passed on, and uv uses the system certificate store.
+   **Update graphify** / **Remove graphify installed by this extension** manage that copy. An existing install
+   (`uv tool install "graphifyy[mcp]"`, `pipx`, pip) on the PATH is used first.
 3. Run **OpenRouter Ensemble: Build Knowledge Graph**. It runs `graphify extract <folder> --code-only` the first time
    and `graphify update <folder>` after that, and writes `graphify-out/`. Add that folder to `.gitignore` if you don't want it in the repo.
 4. In the chat's tool picker, make sure the **graphify** tools are enabled. VS Code asks you to trust the server when it first starts.
@@ -182,6 +187,7 @@ Re-run it when OpenRouter ships API changes; the compiler then shows what needs 
 | `src/router.ts` | Difficulty triage and tier routing |
 | `src/tools.ts` | Tool classification and the exploration handoff tool |
 | `src/graph.ts` | graphify detection, graph build command, MCP server definition provider |
+| `src/graphInstall.ts` | Managed graphify install (uv from PyPI, verified; everything in global storage) |
 | `src/performance.ts` | Local performance memory, attribution, verdicts |
 | `src/usage.ts` | Usage ledger (daily buckets, recent calls) and live activity bus |
 | `src/sidebar.ts`, `media/sidebar.*` | Activity-bar dashboard (webview view) |
