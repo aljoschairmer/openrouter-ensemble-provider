@@ -16,7 +16,11 @@ import { inflateRawSync } from 'node:zlib';
  */
 
 export const UV_VERSION = '0.12.19';
-export const GRAPHIFY_REQUIREMENT = 'graphifyy[mcp]>=0.9.71';
+/** Oldest release verified with `extract --code-only`, `update` and the `graphify-mcp` launcher. */
+export const GRAPHIFY_REQUIREMENT = 'graphifyy[mcp]>=0.9.40';
+/** Python for the tool venv: a system one in this range, otherwise uv downloads one. Excludes brand-new
+ *  releases whose binary wheels (tree-sitter grammars) may not exist yet. */
+export const PYTHON_REQUEST = '>=3.10,<3.14';
 
 /** uv wheels on PyPI. Linux x64 uses the static musl build, which runs on glibc systems too. */
 export const UV_WHEELS: Record<string, { url: string; sha256: string }> = {
@@ -107,7 +111,7 @@ export class ManagedGraphify {
 			UV_PYTHON_BIN_DIR: path.join(r, 'python-bin'),
 			UV_CACHE_DIR: path.join(r, 'cache'),
 			// system certificate store: works behind TLS-inspecting corporate proxies
-			UV_NATIVE_TLS: '1',
+			UV_SYSTEM_CERTS: '1',
 			UV_NO_PROGRESS: '1',
 			PYTHONIOENCODING: 'utf-8',
 		};
@@ -136,7 +140,7 @@ export class ManagedGraphify {
 		progress.report(upgrade ? 'Updating graphify…' : 'Installing graphify (and Python, if none is available)…');
 		const args = upgrade && await this.installed()
 			? ['tool', 'upgrade', 'graphifyy']
-			: ['tool', 'install', '--force', GRAPHIFY_REQUIREMENT];
+			: ['tool', 'install', '--force', '--python', PYTHON_REQUEST, GRAPHIFY_REQUIREMENT];
 		const out = await this.run(this.uvPath, args, signal);
 		this.opts.log?.(`graphify install: uv ${args.join(' ')}\n${out.trim()}`);
 		if (!await this.installed()) { throw new Error(`uv finished, but ${this.cliPath} is missing:\n${out.trim()}`); }
