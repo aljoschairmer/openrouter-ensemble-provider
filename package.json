@@ -30,12 +30,21 @@
     "llm council"
   ],
   "main": "./out/extension.js",
+  "activationEvents": [
+    "onMcpCollection:openrouterEnsemble.graphify"
+  ],
   "contributes": {
     "languageModelChatProviders": [
       {
         "vendor": "openrouter-ensemble",
         "displayName": "OpenRouter Ensemble",
         "managementCommand": "openrouterEnsemble.manage"
+      }
+    ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "openrouterEnsemble.graphify",
+        "label": "Graphify (code knowledge graph)"
       }
     ],
     "commands": [
@@ -70,6 +79,16 @@
         "title": "Refresh",
         "category": "OpenRouter Ensemble",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "openrouterEnsemble.buildGraph",
+        "title": "Build Knowledge Graph",
+        "category": "OpenRouter Ensemble"
+      },
+      {
+        "command": "openrouterEnsemble.graphStatus",
+        "title": "Show Knowledge Graph Status",
+        "category": "OpenRouter Ensemble"
       }
     ],
     "configuration": {
@@ -411,6 +430,23 @@
           "type": "boolean",
           "default": true,
           "description": "Remember locally how each drafting model performs (review wins, how much of the final answer came from its draft, latency, cost). Only numbers and model ids are stored, never prompts or code."
+        },
+        "openrouterEnsemble.graph.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Expose a code knowledge graph built by [graphify](https://github.com/Graphify-Labs/graphify) as MCP tools (`query_graph`, `get_neighbors`, `shortest_path`, \u2026) in Copilot Chat agent mode. Ensembles with `afterExploration` use them while exploring, so the drafting models see the results. Requires graphify with MCP support: `uv tool install \"graphifyy[mcp]\"`. Build the graph with **OpenRouter Ensemble: Build Knowledge Graph** (local, code only, no API calls)."
+        },
+        "openrouterEnsemble.graph.command": {
+          "type": "string",
+          "default": "graphify",
+          "scope": "machine",
+          "description": "graphify executable (name on the PATH or absolute path)."
+        },
+        "openrouterEnsemble.graph.python": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Python interpreter that has graphify installed, used to start its MCP server. Empty: uses `graphify-mcp` next to the `graphify` executable, or the interpreter its launcher points to."
         }
       }
     },
@@ -461,7 +497,7 @@
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
     "gen:types": "node scripts/gen-types.mjs",
-    "test": "npm run compile && node test/pipeline.test.js && node test/performance.test.js && node test/usage.test.js && node test/e2e.test.js"
+    "test": "npm run compile && node test/pipeline.test.js && node test/performance.test.js && node test/usage.test.js && node test/graph.test.js && node test/e2e.test.js"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

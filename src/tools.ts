@@ -17,7 +17,9 @@ const WRITE = new Set(['create', 'write', 'edit', 'edits', 'replace', 'insert', 
 	'kill', 'new', 'merge', 'close', 'open', 'start', 'stop', 'restart', 'upload', 'publish', 'subagent']);
 const READ = new Set(['read', 'get', 'list', 'search', 'find', 'grep', 'fetch', 'view', 'show', 'lookup', 'query', 'usages', 'usage',
 	'symbols', 'symbol', 'errors', 'problems', 'diff', 'changes', 'changed', 'status', 'memory', 'memories', 'todo', 'think', 'describe',
-	'inspect', 'explain', 'semantic', 'references', 'definition', 'hover', 'outline', 'tree', 'log', 'blame', 'history', 'dir', 'files']);
+	'inspect', 'explain', 'semantic', 'references', 'definition', 'hover', 'outline', 'tree', 'log', 'blame', 'history', 'dir', 'files',
+	// code knowledge graph (graphify MCP: query_graph, get_neighbors, shortest_path, god_nodes, graph_stats, get_community)
+	'graph', 'node', 'nodes', 'neighbors', 'path', 'community', 'communities', 'stats', 'affected']);
 
 /** Splits snake_case, kebab-case, dotted and camelCase names into lowercase words. */
 export function toolWords(name: string): string[] {
